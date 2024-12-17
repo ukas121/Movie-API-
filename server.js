@@ -2,19 +2,37 @@ import express from 'express';
 import pool from './database.js';
 
 const app = express();
-app.use(express.json());  
+app.use(express.json());
 
-app.get('/api/movies', async (req, res) => {
+// Root route
+app.get('/', (req, res) => {
+    res.json({ message: 'Welcome to the Movie API!' });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: 'Internal Server Error' });
+});
+
+// GET all movies with pagination
+app.get('/api/movies', async (req, res, next) => {
+    const { page = 1, limit = 10 } = req.query;
+    const offset = (page - 1) * limit;
+
     try {
-        const result = await pool.query('SELECT * FROM "Movie"');
-        res.json(result.rows); 
+        const result = await pool.query(
+            'SELECT * FROM "Movie" ORDER BY "MovieID" LIMIT $1 OFFSET $2',
+            [limit, offset]
+        );
+        res.json(result.rows);
     } catch (error) {
-        console.error('Error fetching movies:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.get('/api/movies/:id', async (req, res) => {
+// GET movie by ID
+app.get('/api/movies/:id', async (req, res, next) => {
     const movieID = req.params.id;
     try {
         const result = await pool.query('SELECT * FROM "Movie" WHERE "MovieID" = $1', [movieID]);
@@ -24,26 +42,50 @@ app.get('/api/movies/:id', async (req, res) => {
             res.status(404).json({ error: 'Movie not found' });
         }
     } catch (error) {
-        console.error('Error fetching movie:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.post('/api/movies', async (req, res) => {
-    const { title, year, genreID, review } = req.body; 
+// GET movies by keyword (search)
+app.get('/api/movies/search', async (req, res, next) => {
+    const { keyword } = req.query;
+
+    if (!keyword) {
+        return res.status(400).json({ error: 'Missing required query parameter: keyword' });
+    }
+
+    try {
+        const result = await pool.query(
+            'SELECT * FROM "Movie" WHERE "Title" ILIKE $1',
+            [`%${keyword}%`]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        next(error);
+    }
+});
+
+// POST new movie
+app.post('/api/movies', async (req, res, next) => {
+    const { title, year, genreID, review } = req.body;
+
+    if (!title || !year || !genreID) {
+        return res.status(400).json({ error: 'Missing required fields: title, year, genreID' });
+    }
+
     try {
         const result = await pool.query(
             'INSERT INTO "Movie" ("Title", "Year", "GenreID", "Review") VALUES ($1, $2, $3, $4) RETURNING *',
-            [title, year, genreID, review]
+            [title, year, genreID, review || null]
         );
-        res.status(201).json(result.rows[0]); 
+        res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error('Error adding movie:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.delete('/api/movies/:id', async (req, res) => {
+// DELETE movie by ID
+app.delete('/api/movies/:id', async (req, res, next) => {
     const movieID = req.params.id;
     try {
         const result = await pool.query('DELETE FROM "Movie" WHERE "MovieID" = $1 RETURNING *', [movieID]);
@@ -53,167 +95,119 @@ app.delete('/api/movies/:id', async (req, res) => {
             res.status(404).json({ error: 'Movie not found' });
         }
     } catch (error) {
-        console.error('Error deleting movie:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.get('/api/users', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM "User"');
-        res.json(result.rows); 
-    } catch (error) {
-        console.error('Error fetching users:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.post('/api/users', async (req, res) => {
+// POST new user
+app.post('/api/users', async (req, res, next) => {
     const { username, password, yearOfBirth } = req.body;
+
+    if (!username || !password || !yearOfBirth) {
+        return res.status(400).json({ error: 'Missing required fields: username, password, yearOfBirth' });
+    }
+
     try {
         const result = await pool.query(
             'INSERT INTO "User" ("Username", "Password", "YearOfBirth") VALUES ($1, $2, $3) RETURNING *',
             [username, password, yearOfBirth]
         );
-        res.status(201).json(result.rows[0]); 
+        res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error('Error adding user:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.delete('/api/users/:id', async (req, res) => {
-    const userID = req.params.id;
+// POST new review for a movie
+app.post('/api/reviews', async (req, res, next) => {
+    const { username, stars, reviewText, movieID } = req.body;
+
+    if (!username || !stars || !reviewText || !movieID) {
+        return res.status(400).json({ error: 'Missing required fields: username, stars, reviewText, movieID' });
+    }
+
     try {
-        const result = await pool.query('DELETE FROM "User" WHERE "UserID" = $1 RETURNING *', [userID]);
-        if (result.rows.length > 0) {
-            res.json({ message: 'User deleted successfully', user: result.rows[0] });
-        } else {
-            res.status(404).json({ error: 'User not found' });
-        }
+        const result = await pool.query(
+            'INSERT INTO "Review" ("Username", "Stars", "ReviewText", "MovieID") VALUES ($1, $2, $3, $4) RETURNING *',
+            [username, stars, reviewText, movieID]
+        );
+        res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error('Error deleting user:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.get('/api/genres', async (req, res) => {
+// POST favorite movie for user
+app.post('/api/users/:username/favorites', async (req, res, next) => {
+    const { username } = req.params;
+    const { movieID } = req.body;
+
+    if (!movieID) {
+        return res.status(400).json({ error: 'Missing required field: movieID' });
+    }
+
+    try {
+        const result = await pool.query(
+            'INSERT INTO "Favorites" ("Username", "MovieID") VALUES ($1, $2) RETURNING *',
+            [username, movieID]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        next(error);
+    }
+});
+
+// GET favorite movies by username
+app.get('/api/users/:username/favorites', async (req, res, next) => {
+    const { username } = req.params;
+
+    try {
+        const result = await pool.query(
+            'SELECT * FROM "Movie" WHERE "MovieID" IN (SELECT "MovieID" FROM "Favorites" WHERE "Username" = $1)',
+            [username]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        next(error);
+    }
+});
+
+// GET genres
+app.get('/api/genres', async (req, res, next) => {
     try {
         const result = await pool.query('SELECT * FROM "Genre"');
-        res.json(result.rows); 
+        res.json(result.rows);
     } catch (error) {
-        console.error('Error fetching genres:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.post('/api/genres', async (req, res) => {
+// POST new genre
+app.post('/api/genres', async (req, res, next) => {
     const { genreName } = req.body;
+
+    if (!genreName) {
+        return res.status(400).json({ error: 'Missing required field: genreName' });
+    }
+
     try {
         const result = await pool.query(
             'INSERT INTO "Genre" ("GenreName") VALUES ($1) RETURNING *',
             [genreName]
         );
-        res.status(201).json(result.rows[0]); 
+        res.status(201).json(result.rows[0]);
     } catch (error) {
-        console.error('Error adding genre:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        next(error);
     }
 });
 
-app.delete('/api/genres/:id', async (req, res) => {
-    const genreID = req.params.id;
-    try {
-        const result = await pool.query('DELETE FROM "Genre" WHERE "GenreID" = $1 RETURNING *', [genreID]);
-        if (result.rows.length > 0) {
-            res.json({ message: 'Genre deleted successfully', genre: result.rows[0] });
-        } else {
-            res.status(404).json({ error: 'Genre not found' });
-        }
-    } catch (error) {
-        console.error('Error deleting genre:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
+// Default error route
+app.use((req, res) => {
+    res.status(404).json({ error: 'Route not found' });
 });
 
-app.get('/api/reviews', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM "Review"');
-        res.json(result.rows); 
-    } catch (error) {
-        console.error('Error fetching reviews:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.post('/api/reviews', async (req, res) => {
-    const { movieID, userID, reviewText } = req.body;
-    try {
-        const result = await pool.query(
-            'INSERT INTO "Review" ("MovieID", "UserID", "ReviewText") VALUES ($1, $2, $3) RETURNING *',
-            [movieID, userID, reviewText]
-        );
-        res.status(201).json(result.rows[0]); 
-    } catch (error) {
-        console.error('Error adding review:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.delete('/api/reviews/:id', async (req, res) => {
-    const reviewID = req.params.id;
-    try {
-        const result = await pool.query('DELETE FROM "Review" WHERE "ReviewID" = $1 RETURNING *', [reviewID]);
-        if (result.rows.length > 0) {
-            res.json({ message: 'Review deleted successfully', review: result.rows[0] });
-        } else {
-            res.status(404).json({ error: 'Review not found' });
-        }
-    } catch (error) {
-        console.error('Error deleting review:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.get('/api/favorites', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM "Favorites"');
-        res.json(result.rows); 
-    } catch (error) {
-        console.error('Error fetching favorites:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.post('/api/favorites', async (req, res) => {
-    const { movieID, userID } = req.body;
-    try {
-        const result = await pool.query(
-            'INSERT INTO "Favorites" ("MovieID", "UserID") VALUES ($1, $2) RETURNING *',
-            [movieID, userID]
-        );
-        res.status(201).json(result.rows[0]); 
-    } catch (error) {
-        console.error('Error adding favorite:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.delete('/api/favorites/:id', async (req, res) => {
-    const { movieID, userID } = req.params;
-    try {
-        const result = await pool.query('DELETE FROM "Favorites" WHERE "MovieID" = $1 AND "UserID" = $2 RETURNING *', [movieID, userID]);
-        if (result.rows.length > 0) {
-            res.json({ message: 'Favorite deleted successfully', favorite: result.rows[0] });
-        } else {
-            res.status(404).json({ error: 'Favorite not found' });
-        }
-    } catch (error) {
-        console.error('Error deleting favorite:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.listen(3001, () => {
-    console.log('Server is running on port 3001');
+// Start the server
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
