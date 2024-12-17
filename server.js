@@ -50,6 +50,7 @@ app.get('/api/movies/:id', async (req, res, next) => {
 app.get('/api/movies/search', async (req, res, next) => {
     const { keyword } = req.query;
 
+    // Validate if 'keyword' is provided in the query parameters
     if (!keyword) {
         return res.status(400).json({ error: 'Missing required query parameter: keyword' });
     }
